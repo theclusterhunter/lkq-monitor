@@ -49,15 +49,9 @@ def main():
     old_hash = load_old_hash()
     new_hash = get_page_hash()
 
-    if old_hash is None:
-        print("First run. Saving LKQ page snapshot.")
-    elif old_hash != new_hash:
-        send_alert(
-            "LKQ PAGE CHANGED — CHECK CLUSTER LISTINGS\n\n"
-            f"{URL}"
-        )
-    else:
-        print("No LKQ changes found.")
+    send_alert("✅ TEST SUCCESS — LKQ bot is connected to Telegram and running from GitHub.")
+
+print("Telegram test sent.")
 
     save_new_hash(new_hash)
 
