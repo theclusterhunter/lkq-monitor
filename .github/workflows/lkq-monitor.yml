@@ -1,66 +1,39 @@
-import hashlib
-import os
-import requests
+name: LKQ Monitor
 
-URL = "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
-HASH_FILE = "page_hash.txt"
+permissions:
+  contents: write
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-def send_alert(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        print(message)
-        return
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": message},
-        timeout=15
-    )
+      - name: Install packages
+        run: pip install -r requirements.txt
 
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python monitor.py
 
-def get_page_hash():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(URL, headers=headers, timeout=25)
-    response.raise_for_status()
-
-    page_text = response.text
-
-    return hashlib.sha256(page_text.encode("utf-8")).hexdigest()
-
-
-def load_old_hash():
-    if not os.path.exists(HASH_FILE):
-        return None
-
-    with open(HASH_FILE, "r") as file:
-        return file.read().strip()
-
-
-def save_new_hash(new_hash):
-    with open(HASH_FILE, "w") as file:
-        file.write(new_hash)
-
-
-def main():
-    old_hash = load_old_hash()
-    new_hash = get_page_hash()
-
-    if old_hash is None:
-        print("First run. Saving LKQ page snapshot.")
-    elif old_hash != new_hash:
-        send_alert(
-            "LKQ PAGE CHANGED — CHECK CLUSTER LISTINGS\n\n"
-            f"{URL}"
-        )
-    else:
-        print("No LKQ changes found.")
-
-    save_new_hash(new_hash)
-
-
-if __name__ == "__main__":
-    main()
+      - name: Save page hash
+        run: |
+          git config user.name "lkq-monitor"
+          git config user.email "lkq-monitor@users.noreply.github.com"
+          git add page_hash.txt
+          git commit -m "Update LKQ page hash" || echo "No changes to commit"
+          git push
