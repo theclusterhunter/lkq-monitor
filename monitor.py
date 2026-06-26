@@ -4,14 +4,18 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-URLS = [
-    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm",
-    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hKPDOKcFOm",
-    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hK4FOKcFOm",
-    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hPD3OKcFOm",
-    "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hKjFjOcn4O",
-    "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hn4DmOcn4O",
-]
+TRACKED_PAGES = {
+    "CLUSTER": [
+        "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm",
+        "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hKPDOKcFOm",
+        "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hK4FOKcFOm",
+        "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hPD3OKcFOm",
+    ],
+    "DME": [
+        "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hKjFjOcn4O",
+        "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hn4DmOcn4O",
+    ],
+}
 
 SEEN_FILE = "seen_parts.json"
 
@@ -28,7 +32,7 @@ def send_alert(message):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": message},
-        timeout=15
+        timeout=15,
     )
 
 
@@ -63,21 +67,42 @@ def extract_listings(html):
         r"Location:\s*(?P<location>[^\n]+).*?"
         r"Source:\s*(?P<source>[^\n]+).*?"
         r"Price:\s*(?P<price>\$[0-9,.]+)",
-        re.DOTALL | re.IGNORECASE
+        re.DOTALL | re.IGNORECASE,
     )
 
     listings = []
 
     for match in pattern.finditer(text):
-        listings.append({
-            "part": match.group("part").strip(),
-            "source": match.group("source").strip(),
-            "price": match.group("price").strip(),
-            "mileage": match.group("mileage").strip(),
-            "location": match.group("location").strip(),
-        })
+        listings.append(
+            {
+                "part": match.group("part").strip(),
+                "source": match.group("source").strip(),
+                "price": match.group("price").strip(),
+                "mileage": match.group("mileage").strip(),
+                "location": match.group("location").strip(),
+            }
+        )
 
     return listings
+
+
+def make_message(category, item, url):
+    if category == "CLUSTER":
+        title = "📟 NEW CLUSTER FOUND"
+    elif category == "DME":
+        title = "🧠 NEW DME FOUND"
+    else:
+        title = "🚨 NEW LKQ PART FOUND"
+
+    return (
+        f"{title}\n\n"
+        f"Source: {item['source']}\n"
+        f"Price: {item['price']}\n"
+        f"Part #: {item['part']}\n"
+        f"Mileage: {item['mileage']}\n"
+        f"Location: {item['location']}\n\n"
+        f"Open LKQ:\n{url}"
+    )
 
 
 def main():
@@ -87,36 +112,27 @@ def main():
     total_found = 0
     total_new = 0
 
-    for url in URLS:
-        try:
-            html = fetch_page(url)
-            listings = extract_listings(html)
-            total_found += len(listings)
+    for category, urls in TRACKED_PAGES.items():
+        for url in urls:
+            try:
+                html = fetch_page(url)
+                listings = extract_listings(html)
+                total_found += len(listings)
 
-            if not listings:
-                print(f"No listings found on: {url}")
-                continue
+                if not listings:
+                    print(f"No listings found for {category}: {url}")
+                    continue
 
-            for item in listings:
-                unique_key = f"{url}|{item['part']}"
+                for item in listings:
+                    unique_key = f"{category}|{url}|{item['part']}"
 
-                if unique_key not in seen:
-                    message = (
-                        "🚨 NEW LKQ PART FOUND\n\n"
-                        f"Source: {item['source']}\n"
-                        f"Price: {item['price']}\n"
-                        f"Part #: {item['part']}\n"
-                        f"Mileage: {item['mileage']}\n"
-                        f"Location: {item['location']}\n\n"
-                        f"LKQ Page:\n{url}"
-                    )
+                    if unique_key not in seen:
+                        send_alert(make_message(category, item, url))
+                        updated_seen.add(unique_key)
+                        total_new += 1
 
-                    send_alert(message)
-                    updated_seen.add(unique_key)
-                    total_new += 1
-
-        except Exception as e:
-            print(f"Error checking {url}: {e}")
+            except Exception as e:
+                print(f"Error checking {category} page {url}: {e}")
 
     save_seen(updated_seen)
 
