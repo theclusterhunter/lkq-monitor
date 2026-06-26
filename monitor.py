@@ -1,78 +1,66 @@
-import json, os, re, requests
-from bs4 import BeautifulSoup
+import hashlib
+import os
+import requests
 
-SEARCH_URLS = [
-    "https://www.lkqonline.com/search?keyword=bmw%20speedometer%20cluster",
-    "https://www.lkqonline.com/search?keyword=bmw%206wb%20cluster",
-    "https://www.lkqonline.com/search?keyword=bmw%20head%20cluster",
-]
+URL = "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
 
-SEEN_FILE = "seen.json"
+HASH_FILE = "page_hash.txt"
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def load_seen():
-    if not os.path.exists(SEEN_FILE):
-        return set()
-    return set(json.load(open(SEEN_FILE)))
 
-def save_seen(seen):
-    json.dump(sorted(seen), open(SEEN_FILE, "w"), indent=2)
+def send_alert(message):
+    if not BOT_TOKEN or not CHAT_ID:
+        print(message)
+        return
 
-def alert(msg):
-    if BOT_TOKEN and CHAT_ID:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg},
-            timeout=15
-        )
-    print(msg)
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": message},
+        timeout=15
+    )
 
-def extract_listings(html):
-    soup = BeautifulSoup(html, "html.parser")
-    listings = []
 
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        text = a.get_text(" ", strip=True)
+def get_page_hash():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(URL, headers=headers, timeout=25)
+    response.raise_for_status()
 
-        if "speedometer" in text.lower() or "cluster" in text.lower():
-            if href.startswith("/"):
-                href = "https://www.lkqonline.com" + href
+    page_text = response.text
 
-            listing_id_match = re.search(r"~(\d+)", href)
-            listing_id = listing_id_match.group(1) if listing_id_match else href
+    return hashlib.sha256(page_text.encode("utf-8")).hexdigest()
 
-            listings.append({
-                "id": listing_id,
-                "title": text[:120],
-                "url": href
-            })
 
-    return listings
+def load_old_hash():
+    if not os.path.exists(HASH_FILE):
+        return None
+
+    with open(HASH_FILE, "r") as file:
+        return file.read().strip()
+
+
+def save_new_hash(new_hash):
+    with open(HASH_FILE, "w") as file:
+        file.write(new_hash)
+
 
 def main():
-    seen = load_seen()
-    updated_seen = set(seen)
+    old_hash = load_old_hash()
+    new_hash = get_page_hash()
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+    if old_hash is None:
+        print("First run. Saving LKQ page snapshot.")
+    elif old_hash != new_hash:
+        send_alert(
+            "LKQ PAGE CHANGED — CHECK CLUSTER LISTINGS\n\n"
+            f"{URL}"
+        )
+    else:
+        print("No LKQ changes found.")
 
-    for url in SEARCH_URLS:
-        r = requests.get(url, headers=headers, timeout=25)
-        r.raise_for_status()
+    save_new_hash(new_hash)
 
-        listings = extract_listings(r.text)
-
-        for item in listings:
-            if item["id"] not in seen:
-                alert(
-                    "NEW LKQ CLUSTER LISTING\n\n"
-                    f"{item['title']}\n\n"
-                    f"{item['url']}"
-                )
-                updated_seen.add(item["id"])
-
-    save_seen(updated_seen)
 
 if __name__ == "__main__":
     main()
