@@ -18,17 +18,11 @@ TRACKED_PAGES = {
 }
 
 SEEN_FILE = "seen_parts.json"
-
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def send_alert(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram missing token/chat id")
-        print(message)
-        return
-
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": message},
@@ -39,7 +33,6 @@ def send_alert(message):
 def load_seen():
     if not os.path.exists(SEEN_FILE):
         return set()
-
     with open(SEEN_FILE, "r") as file:
         return set(json.load(file))
 
@@ -60,49 +53,25 @@ def extract_listings(html):
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text("\n", strip=True)
 
-    pattern = re.compile(
-        r"Used Part\s+"
-        r".*?~(?P<part>\d+).*?"
-        r"Mileage:\s*(?P<mileage>[^\n]+).*?"
-        r"Location:\s*(?P<location>[^\n]+).*?"
-        r"Source:\s*(?P<source>[^\n]+).*?"
-        r"Price:\s*(?P<price>\$[0-9,.]+)",
-        re.DOTALL | re.IGNORECASE,
-    )
+    parts = re.findall(r"~(\d+)", text)
+    prices = re.findall(r"\$[0-9,.]+", text)
+    sources = re.findall(r"Source:\s*([^\n]+)", text, re.IGNORECASE)
+    mileages = re.findall(r"Mileage:\s*([^\n]+)", text, re.IGNORECASE)
+    locations = re.findall(r"Location:\s*([^\n]+)", text, re.IGNORECASE)
 
     listings = []
+    count = min(len(parts), len(prices), len(sources))
 
-    for match in pattern.finditer(text):
-        listings.append(
-            {
-                "part": match.group("part").strip(),
-                "source": match.group("source").strip(),
-                "price": match.group("price").strip(),
-                "mileage": match.group("mileage").strip(),
-                "location": match.group("location").strip(),
-            }
-        )
+    for i in range(count):
+        listings.append({
+            "part": parts[i],
+            "source": sources[i],
+            "price": prices[i],
+            "mileage": mileages[i] if i < len(mileages) else "N/A",
+            "location": locations[i] if i < len(locations) else "N/A",
+        })
 
     return listings
-
-
-def make_message(category, item, url):
-    if category == "CLUSTER":
-        title = "📟 NEW CLUSTER FOUND"
-    elif category == "DME":
-        title = "🧠 NEW DME FOUND"
-    else:
-        title = "🚨 NEW LKQ PART FOUND"
-
-    return (
-        f"{title}\n\n"
-        f"Source: {item['source']}\n"
-        f"Price: {item['price']}\n"
-        f"Part #: {item['part']}\n"
-        f"Mileage: {item['mileage']}\n"
-        f"Location: {item['location']}\n\n"
-        f"Open LKQ:\n{url}"
-    )
 
 
 def main():
@@ -111,6 +80,7 @@ def main():
 
     total_found = 0
     total_new = 0
+    debug_lines = []
 
     for category, urls in TRACKED_PAGES.items():
         for url in urls:
@@ -119,24 +89,35 @@ def main():
                 listings = extract_listings(html)
                 total_found += len(listings)
 
-                if not listings:
-                    print(f"No listings found for {category}: {url}")
-                    continue
+                debug_lines.append(f"{category}: found {len(listings)} listings")
 
                 for item in listings:
                     unique_key = f"{category}|{url}|{item['part']}"
 
                     if unique_key not in seen:
-                        send_alert(make_message(category, item, url))
+                        send_alert(
+                            f"{'📟 NEW CLUSTER FOUND' if category == 'CLUSTER' else '🧠 NEW DME FOUND'}\n\n"
+                            f"Source: {item['source']}\n"
+                            f"Price: {item['price']}\n"
+                            f"Part #: {item['part']}\n"
+                            f"Mileage: {item['mileage']}\n"
+                            f"Location: {item['location']}\n\n"
+                            f"Open LKQ:\n{url}"
+                        )
                         updated_seen.add(unique_key)
                         total_new += 1
 
             except Exception as e:
-                print(f"Error checking {category} page {url}: {e}")
+                debug_lines.append(f"{category}: ERROR {e}")
 
     save_seen(updated_seen)
 
-    print(f"Finished. Total listings found: {total_found}. New alerts sent: {total_new}")
+    send_alert(
+        "✅ LKQ BOT CHECK COMPLETE\n\n"
+        f"Total listings found: {total_found}\n"
+        f"New alerts sent: {total_new}\n\n"
+        + "\n".join(debug_lines)
+    )
 
 
 if __name__ == "__main__":
