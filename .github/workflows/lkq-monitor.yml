@@ -30,10 +30,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python monitor.py
 
-      - name: Save page hash
+      - name: Save seen parts
         run: |
           git config user.name "lkq-monitor"
           git config user.email "lkq-monitor@users.noreply.github.com"
-          git add page_hash.txt
-          git commit -m "Update LKQ page hash" || echo "No changes to commit"
+          git add seen_parts.json
+          git commit -m "Update seen LKQ parts" || echo "No changes to commit"
           git push
