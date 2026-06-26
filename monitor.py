@@ -4,7 +4,15 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-URL = "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
+URLS = [
+    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm",
+    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hKPDOKcFOm",
+    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hK4FOKcFOm",
+    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hPD3OKcFOm",
+    "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hKjFjOcn4O",
+    "https://www.lkqonline.com/2010-bmw-335i-engine-motor-control-module/-hn4DmOcn4O",
+]
+
 SEEN_FILE = "seen_parts.json"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -27,6 +35,7 @@ def send_alert(message):
 def load_seen():
     if not os.path.exists(SEEN_FILE):
         return set()
+
     with open(SEEN_FILE, "r") as file:
         return set(json.load(file))
 
@@ -36,9 +45,9 @@ def save_seen(seen):
         json.dump(sorted(list(seen)), file, indent=2)
 
 
-def fetch_page():
+def fetch_page(url):
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(URL, headers=headers, timeout=25)
+    response = requests.get(url, headers=headers, timeout=25)
     response.raise_for_status()
     return response.text
 
@@ -73,37 +82,45 @@ def extract_listings(html):
 
 def main():
     seen = load_seen()
-    html = fetch_page()
-    listings = extract_listings(html)
-
-    if not listings:
-        print("No listings found. LKQ page layout may have changed.")
-        return
-
     updated_seen = set(seen)
-    new_count = 0
 
-    for item in listings:
-        part_number = item["part"]
+    total_found = 0
+    total_new = 0
 
-        if part_number not in seen:
-            message = (
-                "🚨 NEW LKQ CLUSTER\n\n"
-                f"Source: {item['source']}\n"
-                f"Price: {item['price']}\n"
-                f"Part #: {item['part']}\n"
-                f"Mileage: {item['mileage']}\n"
-                f"Location: {item['location']}\n\n"
-                f"{URL}"
-            )
+    for url in URLS:
+        try:
+            html = fetch_page(url)
+            listings = extract_listings(html)
+            total_found += len(listings)
 
-            send_alert(message)
-            updated_seen.add(part_number)
-            new_count += 1
+            if not listings:
+                print(f"No listings found on: {url}")
+                continue
+
+            for item in listings:
+                unique_key = f"{url}|{item['part']}"
+
+                if unique_key not in seen:
+                    message = (
+                        "🚨 NEW LKQ PART FOUND\n\n"
+                        f"Source: {item['source']}\n"
+                        f"Price: {item['price']}\n"
+                        f"Part #: {item['part']}\n"
+                        f"Mileage: {item['mileage']}\n"
+                        f"Location: {item['location']}\n\n"
+                        f"LKQ Page:\n{url}"
+                    )
+
+                    send_alert(message)
+                    updated_seen.add(unique_key)
+                    total_new += 1
+
+        except Exception as e:
+            print(f"Error checking {url}: {e}")
 
     save_seen(updated_seen)
 
-    print(f"Checked LKQ. Found {len(listings)} listings. New alerts sent: {new_count}")
+    print(f"Finished. Total listings found: {total_found}. New alerts sent: {total_new}")
 
 
 if __name__ == "__main__":
