@@ -11,8 +11,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_alert(message):
     if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram missing token or chat ID")
-        print(message)
+        print("Telegram missing token/chat id")
         return
 
     requests.post(
@@ -46,8 +45,19 @@ def main():
     old_hash = load_old_hash()
     new_hash = get_page_hash()
 
-    send_alert("✅ TEST SUCCESS — LKQ bot is connected to Telegram and running from GitHub.")
-    print("Telegram test sent.")
+    if old_hash is None:
+        print("First run — saving snapshot")
+
+    elif old_hash != new_hash:
+        send_alert(
+            "🚨 LKQ PAGE CHANGED\n\n"
+            "Possible new cluster listing found.\n\n"
+            f"{URL}"
+        )
+        print("Change detected, alert sent.")
+
+    else:
+        print("No changes.")
 
     save_new_hash(new_hash)
 
