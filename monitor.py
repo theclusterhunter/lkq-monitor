@@ -1,91 +1,78 @@
-import json
-import os
-import re
-import requests
+import json, os, re, requests
 from bs4 import BeautifulSoup
 
-URLS = [
-    "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
+SEARCH_URLS = [
+    "https://www.lkqonline.com/search?keyword=bmw%20speedometer%20cluster",
+    "https://www.lkqonline.com/search?keyword=bmw%206wb%20cluster",
+    "https://www.lkqonline.com/search?keyword=bmw%20head%20cluster",
 ]
 
 SEEN_FILE = "seen.json"
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def load_seen():
     if not os.path.exists(SEEN_FILE):
         return set()
-    with open(SEEN_FILE, "r") as f:
-        return set(json.load(f))
-
+    return set(json.load(open(SEEN_FILE)))
 
 def save_seen(seen):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(sorted(list(seen)), f, indent=2)
+    json.dump(sorted(seen), open(SEEN_FILE, "w"), indent=2)
 
+def alert(msg):
+    if BOT_TOKEN and CHAT_ID:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg},
+            timeout=15
+        )
+    print(msg)
 
-def send_telegram(message):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram not configured.")
-        return
+def extract_listings(html):
+    soup = BeautifulSoup(html, "html.parser")
+    listings = []
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    })
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        text = a.get_text(" ", strip=True)
 
+        if "speedometer" in text.lower() or "cluster" in text.lower():
+            if href.startswith("/"):
+                href = "https://www.lkqonline.com" + href
 
-def check_page(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+            listing_id_match = re.search(r"~(\d+)", href)
+            listing_id = listing_id_match.group(1) if listing_id_match else href
 
-    response = requests.get(url, headers=headers, timeout=20)
-    response.raise_for_status()
+            listings.append({
+                "id": listing_id,
+                "title": text[:120],
+                "url": href
+            })
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    text = soup.get_text(" ", strip=True)
-
-    title = soup.title.get_text(strip=True) if soup.title else "LKQ Listing"
-
-    price_match = re.search(r"\$\s?[0-9,]+(?:\.\d{2})?", text)
-    price = price_match.group(0) if price_match else "Price not found"
-
-    unavailable_words = ["out of stock", "not available", "sold", "removed"]
-    status = "Possibly available"
-
-    if any(word in text.lower() for word in unavailable_words):
-        status = "May be unavailable/sold"
-
-    listing_key = f"{url}|{price}|{status}"
-
-    return listing_key, title, price, status, url
-
+    return listings
 
 def main():
     seen = load_seen()
-    new_seen = set(seen)
+    updated_seen = set(seen)
 
-    for url in URLS:
-        try:
-            listing_key, title, price, status, link = check_page(url)
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-            if listing_key not in seen:
-                msg = f"LKQ update found:\n\n{title}\nPrice: {price}\nStatus: {status}\n\n{link}"
-                print(msg)
-                send_telegram(msg)
-                new_seen.add(listing_key)
-            else:
-                print(f"No change: {url}")
+    for url in SEARCH_URLS:
+        r = requests.get(url, headers=headers, timeout=25)
+        r.raise_for_status()
 
-        except Exception as e:
-            print(f"Error checking {url}: {e}")
+        listings = extract_listings(r.text)
 
-    save_seen(new_seen)
+        for item in listings:
+            if item["id"] not in seen:
+                alert(
+                    "NEW LKQ CLUSTER LISTING\n\n"
+                    f"{item['title']}\n\n"
+                    f"{item['url']}"
+                )
+                updated_seen.add(item["id"])
 
+    save_seen(updated_seen)
 
 if __name__ == "__main__":
     main()
