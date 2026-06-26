@@ -3,7 +3,6 @@ import os
 import requests
 
 URL = "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
-
 HASH_FILE = "page_hash.txt"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -12,6 +11,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_alert(message):
     if not BOT_TOKEN or not CHAT_ID:
+        print("Telegram missing token or chat ID")
         print(message)
         return
 
@@ -26,10 +26,7 @@ def get_page_hash():
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(URL, headers=headers, timeout=25)
     response.raise_for_status()
-
-    page_text = response.text
-
-    return hashlib.sha256(page_text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(response.text.encode("utf-8")).hexdigest()
 
 
 def load_old_hash():
@@ -50,8 +47,7 @@ def main():
     new_hash = get_page_hash()
 
     send_alert("✅ TEST SUCCESS — LKQ bot is connected to Telegram and running from GitHub.")
-
-print("Telegram test sent.")
+    print("Telegram test sent.")
 
     save_new_hash(new_hash)
 
