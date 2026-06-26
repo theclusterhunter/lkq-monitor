@@ -1,9 +1,11 @@
-import hashlib
+import json
 import os
+import re
 import requests
+from bs4 import BeautifulSoup
 
 URL = "https://www.lkqonline.com/2015-bmw-760-series-speedometer-head-cluster/-hDPDOKcFOm"
-HASH_FILE = "page_hash.txt"
+SEEN_FILE = "seen_parts.json"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -12,6 +14,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 def send_alert(message):
     if not BOT_TOKEN or not CHAT_ID:
         print("Telegram missing token/chat id")
+        print(message)
         return
 
     requests.post(
@@ -21,45 +24,86 @@ def send_alert(message):
     )
 
 
-def get_page_hash():
+def load_seen():
+    if not os.path.exists(SEEN_FILE):
+        return set()
+    with open(SEEN_FILE, "r") as file:
+        return set(json.load(file))
+
+
+def save_seen(seen):
+    with open(SEEN_FILE, "w") as file:
+        json.dump(sorted(list(seen)), file, indent=2)
+
+
+def fetch_page():
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(URL, headers=headers, timeout=25)
     response.raise_for_status()
-    return hashlib.sha256(response.text.encode("utf-8")).hexdigest()
+    return response.text
 
 
-def load_old_hash():
-    if not os.path.exists(HASH_FILE):
-        return None
+def extract_listings(html):
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text("\n", strip=True)
 
-    with open(HASH_FILE, "r") as file:
-        return file.read().strip()
+    pattern = re.compile(
+        r"Used Part\s+"
+        r".*?~(?P<part>\d+).*?"
+        r"Mileage:\s*(?P<mileage>[^\n]+).*?"
+        r"Location:\s*(?P<location>[^\n]+).*?"
+        r"Source:\s*(?P<source>[^\n]+).*?"
+        r"Price:\s*(?P<price>\$[0-9,.]+)",
+        re.DOTALL | re.IGNORECASE
+    )
 
+    listings = []
 
-def save_new_hash(new_hash):
-    with open(HASH_FILE, "w") as file:
-        file.write(new_hash)
+    for match in pattern.finditer(text):
+        listings.append({
+            "part": match.group("part").strip(),
+            "source": match.group("source").strip(),
+            "price": match.group("price").strip(),
+            "mileage": match.group("mileage").strip(),
+            "location": match.group("location").strip(),
+        })
+
+    return listings
 
 
 def main():
-    old_hash = load_old_hash()
-    new_hash = get_page_hash()
+    seen = load_seen()
+    html = fetch_page()
+    listings = extract_listings(html)
 
-    if old_hash is None:
-        print("First run — saving snapshot")
+    if not listings:
+        print("No listings found. LKQ page layout may have changed.")
+        return
 
-    elif old_hash != new_hash:
-        send_alert(
-            "🚨 LKQ PAGE CHANGED\n\n"
-            "Possible new cluster listing found.\n\n"
-            f"{URL}"
-        )
-        print("Change detected, alert sent.")
+    updated_seen = set(seen)
+    new_count = 0
 
-    else:
-        print("No changes.")
+    for item in listings:
+        part_number = item["part"]
 
-    save_new_hash(new_hash)
+        if part_number not in seen:
+            message = (
+                "🚨 NEW LKQ CLUSTER\n\n"
+                f"Source: {item['source']}\n"
+                f"Price: {item['price']}\n"
+                f"Part #: {item['part']}\n"
+                f"Mileage: {item['mileage']}\n"
+                f"Location: {item['location']}\n\n"
+                f"{URL}"
+            )
+
+            send_alert(message)
+            updated_seen.add(part_number)
+            new_count += 1
+
+    save_seen(updated_seen)
+
+    print(f"Checked LKQ. Found {len(listings)} listings. New alerts sent: {new_count}")
 
 
 if __name__ == "__main__":
